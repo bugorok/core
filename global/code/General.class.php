@@ -629,38 +629,25 @@ END;
     }
 
     /**
-     * Helper function to change the name and type of an existing MySQL table.
+     * Helper function to change the name and type of an existing MySQL table. Note that exceptions aren't caught here:
+     * the caller method has to wrap it.
      *
      * @param string $table The name of the table to alter.
      * @param string $old_col_name The old column name.
      * @param string $new_col_name The new column name.
      * @param string $col_type The new column data type.
-     * @return array Array with indexes:<br/>
-     *               [0]: true/false (success / failure)<br/>
-     *               [1]: message string<br/>
      */
     public static function alterTableColumn($table, $old_col_name, $new_col_name, $col_type)
     {
         $db = Core::$db;
 
-        $success = true;
-        $message = "";
-
         $db->query("
             ALTER TABLE $table
             CHANGE $old_col_name $new_col_name $col_type
         ");
-
-        try {
-            $db->execute();
-        } catch (PDOException $e) {
-            $success = false;
-            $message = $e->getMessage();
-        }
+        $db->execute();
 
         extract(Hooks::processHookCalls("end", compact("table", "old_col_name", "new_col_name", "col_type"), array()), EXTR_OVERWRITE);
-
-        return array($success, $message);
     }
 
 
@@ -1020,7 +1007,7 @@ END;
 
         if (!$all_tables_found) {
             $missing_tables_str = "<blockquote><pre>" . implode("\n", $missing_tables) . "</pre></blockquote>";
-            Errors::displaySeriousError("Form Tools couldn't find all the database tables. Please check your /global/config.php file to confirm the <b>\$g_table_prefix</b> setting. The following tables are missing: {$missing_tables_str}");
+            Errors::majorError("Form Tools couldn't find all the database tables. Please check your /global/config.php file to confirm the <b>\$g_table_prefix</b> setting. The following tables are missing: {$missing_tables_str}");
             exit;
         }
     }

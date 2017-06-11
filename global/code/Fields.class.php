@@ -319,11 +319,6 @@ class Fields {
         $date_field_type_datetime_setting_id = FieldTypes::getFieldTypeSettingIdByIdentifier($date_field_type_id, "display_format");
         $date_field_type_timezone_setting_id = FieldTypes::getFieldTypeSettingIdByIdentifier($date_field_type_id, "apply_timezone_offset");
 
-        $insert_field_query = "
-            INSERT INTO {PREFIX}field_settings (field_id, setting_id, setting_value)
-            VALUES (:field_id, :setting_id, :setting_value)
-        ";
-
         // submission date field
         $db->query("
             INSERT INTO {PREFIX}form_fields (form_id, field_name, field_test_value, field_type_id, is_system_field,
@@ -340,21 +335,9 @@ class Fields {
         $db->execute();
         $submission_date_field_id = $db->getInsertId();
 
-        $db->query($insert_field_query);
-        $db->bindAll(array(
-            "field_id" => $submission_date_field_id,
-            "setting_id" => $date_field_type_datetime_setting_id,
-            "setting_value" => FieldTypes::$defaultDatetimeFormat
-        ));
-        $db->execute();
-
-        $db->query($insert_field_query);
-        $db->bindAll(array(
-            "field_id" => $submission_date_field_id,
-            "setting_id" => $date_field_type_timezone_setting_id,
-            "setting_value" => "yes"
-        ));
-        $db->execute();
+        // TODO why 2?
+        FieldSettings::addSetting($submission_date_field_id, $date_field_type_datetime_setting_id, FieldTypes::$defaultDatetimeFormat);
+        FieldSettings::addSetting($submission_date_field_id, $date_field_type_timezone_setting_id, "yes");
 
         // last modified date
         $db->query("
@@ -372,21 +355,9 @@ class Fields {
         $db->execute();
         $last_modified_date_field_id = $db->getInsertId();
 
-        $db->query($insert_field_query);
-        $db->bindAll(array(
-            "field_id" => $last_modified_date_field_id,
-            "setting_id" => $date_field_type_datetime_setting_id,
-            "setting_value" => FieldTypes::$defaultDatetimeFormat
-        ));
-        $db->execute();
-
-        $db->query($insert_field_query);
-        $db->bindAll(array(
-            "field_id" => $last_modified_date_field_id,
-            "setting_id" => $date_field_type_timezone_setting_id,
-            "setting_value" => "yes"
-        ));
-        $db->execute();
+        // TODO again, why 2?
+        FieldSettings::addSetting($last_modified_date_field_id, $date_field_type_datetime_setting_id, FieldTypes::$defaultDatetimeFormat);
+        FieldSettings::addSetting($last_modified_date_field_id, $date_field_type_datetime_setting_id, "yes");
 
         // ip address
         $db->query("
@@ -1222,43 +1193,6 @@ class Fields {
     }
 
 
-    public static function getFieldSetting($field_id, $setting_id)
-    {
-        $db = Core::$db;
-
-        $db->query("
-            SELECT setting_value
-            FROM   {PREFIX}field_settings
-            WHERE  field_id = :field_id AND
-                   setting_id = :setting_id
-        ");
-        $db->bindAll(array(
-            "field_id" => $field_id,
-            "setting_id" => $setting_id
-        ));
-        $db->execute();
-        $result = $db->fetch();
-
-        return (isset($result["setting_value"])) ? $result["setting_value"] : "";
-    }
-
-    /**
-     * Deletes any extended field settings for a particular form field. Not thrilled about the "extended" in this
-     * function name, but I wanted to emphasize that this function deletes ONLY the settings in the field_settings
-     * table and not the actual values in the form_fields table.
-     *
-     * @param integer $field_id
-     */
-    public static function deleteExtendedFieldSettings($field_id)
-    {
-        Core::$db->query("DELETE FROM {PREFIX}field_settings WHERE field_id = :field_id");
-        Core::$db->bind("field_id", $field_id);
-        Core::$db->execute();
-
-        extract(Hooks::processHookCalls("end", compact("field_id"), array()), EXTR_OVERWRITE);
-    }
-
-
     /**
      * Adds/updates all options for a given field. This is called when the user edits fields from the dialog
      * window on the Fields tab. It updates all information about a field: including the custom settings.
@@ -1381,7 +1315,7 @@ class Fields {
                 // client-side code ensures that the contents of the second tab are always passed so the code below will add
                 // any default values that are needed
                 if ($old_field_type_id != $field_type_id) {
-                    Fields::deleteExtendedFieldSettings($field_id);
+                    FieldSettings::deleteSettings($field_id);
                 }
             }
         }
@@ -1405,7 +1339,7 @@ class Fields {
 
             // since the second tab is being updated, we can rely on all the latest & greatest values being passed
             // in the request, so clean out all old values
-            Fields::deleteExtendedFieldSettings($field_id);
+            FieldSettings::deleteSettings($field_id);
 
             // convert the $info (which is an array of hashes) into a friendlier hash. This makes detecting for Option
             // List fields much easier
@@ -1588,9 +1522,7 @@ class Fields {
 
         $clauses_str = implode(",", $clauses);
 
-        $db->query("DELETE FROM {PREFIX}field_settings WHERE field_id = :field_id");
-        $db->bind("field_id", $field_id);
-        $db->execute();
+        FieldSettings::deleteSettings($field_id);
 
         $db->query("
             UPDATE {PREFIX}form_fields
@@ -1606,5 +1538,68 @@ class Fields {
         }
     }
 
+
+    /**
+     * temporary. How to improve? Could make this just be passed a hash with the vals to update...
+     */
+    public static function temporaryUpdateFields($field)
+    {
+        $db = Core::$db;
+
+//        // now update the fields, and, if need be, the form's database table
+//        foreach ($field_info as $field) {
+//            if ($field["is_new_field"]) {
+//                continue;
+//            }
+
+        if ($field["is_system_field"] == "yes") {
+            $db->query("
+                UPDATE {PREFIX}form_fields
+                SET    field_title = :field_title,
+                       include_on_redirect = :include_on_redirect,
+                       list_order = :list_order,
+                       is_new_sort_group = :is_new_sort_group
+                WHERE  field_id = :field_id
+            ");
+            $db->bindAll(array(
+                "field_title" => $field["display_name"],
+                "include_on_redirect" => $field["include_on_redirect"],
+                "list_order" => $field["list_order"],
+                "is_new_sort_group" => $field["is_new_sort_group"],
+                "field_id" => $field["field_id"]
+            ));
+        } else {
+            $db->query("
+                UPDATE {PREFIX}form_fields
+                SET    field_name = :field_name,
+                       field_title = :field_title,
+                       field_size = :field_size,
+                       col_name = :col_name,
+                       field_type_id  = :field_type_id,
+                       include_on_redirect = :include_on_redirect,
+                       list_order = :list_order,
+                       is_new_sort_group = :is_new_sort_group
+                WHERE  field_id = :field_id
+            ");
+            $db->bindAll(array(
+                "field_name" => $field["form_field_name"],
+                "field_title" => $field["display_name"],
+                "field_size" => $field["field_size"],
+                "col_name" => $field["col_name"],
+                "field_type_id" => $field["field_type_id"],
+                "include_on_redirect" => $field["include_on_redirect"],
+                "list_order" => $field["list_order"],
+                "is_new_sort_group" => $field["is_new_sort_group"],
+                "field_id" => $field["field_id"]
+            ));
+        }
+
+        try {
+            $db->execute();
+        } catch (PDOException $e) {
+            Errors::queryError(__CLASS__, __FILE__, __LINE__, $e->getMessage());
+            exit;
+        }
+    }
 }
 
